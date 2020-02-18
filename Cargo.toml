@@ -3,6 +3,7 @@ name = "wxcrypt"
 version = "0.2.0"
 authors = ["Yiye <87362775@qq.com>"]
 edition = "2018"
+description = "企业微信消息加解密Rust版"
 license = "MIT"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
