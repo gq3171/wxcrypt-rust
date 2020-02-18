@@ -1,8 +1,9 @@
 [package]
 name = "wxcrypt"
 version = "0.2.0"
-authors = ["yiye"]
+authors = ["Yiye <87362775@qq.com>"]
 edition = "2018"
+license = "MIT"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
