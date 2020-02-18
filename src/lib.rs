@@ -22,6 +22,7 @@ use crypto::sha1::Sha1;
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
 use serde_xml_rs::from_reader;
+use std::borrow::Cow;
 use urldecode::decode as urldecode;
 
 type Aes256Cbc = Cbc<Aes256, Pkcs7>;
@@ -38,42 +39,49 @@ struct Xml {
 /// aeskey      企业微信后台，开发者设置的EncodingAESKey经过Base64解密后的vec<u8>
 /// receiveid   不同场景含义不同，详见文档
 ///
-pub struct WxCrptUtil {
-    token: String,
-    aeskey: Vec<u8>,
-    receiveid: String,
+pub struct WxCrptUtil<'a> {
+    token: Cow<'a, str>,
+    aeskey: Cow<'a, [u8]>,
+    receiveid: Cow<'a, str>,
 }
 
-impl WxCrptUtil {
+impl<'a> WxCrptUtil<'a> {
     ///
     /// 初始化WxCrptUtil
     /// encodingaeskey 企业微信后台，开发者设置的EncodingAESKey,未经Base64解密
-    ///
-    pub fn new(token: &str, encodingaeskey: &str, receiveid: &str) -> WxCrptUtil {
-        let mut en_aeskey = encodingaeskey.to_string();
-        en_aeskey.push_str("=");
+    /// 返回初始化后的WxCrptUtil类型
+    pub fn new<T>(token: T, encodingaeskey: T, receiveid: T) -> WxCrptUtil<'a>
+    where
+        T: Into<Cow<'a, str>>,
+    {
+        let mut en_aeskey = encodingaeskey.into();
+        en_aeskey.to_mut().push_str("=");
         let config = base64::STANDARD.decode_allow_trailing_bits(true);
-        let aeskey = match decode_config(&en_aeskey, config) {
+        let aeskey = match decode_config(en_aeskey.to_mut(), config) {
             Ok(n) => n,
             Err(e) => panic!("初始化AesKey错误:{}", e),
         };
         WxCrptUtil {
-            token: token.to_string(),
-            aeskey: aeskey,
-            receiveid: receiveid.to_string(),
+            token: token.into(),
+            aeskey: Cow::from(aeskey),
+            receiveid: receiveid.into(),
         }
     }
 
     ///
     /// 对明文进行加密.
     /// plaintext 需要加密的明文
-    ///
-    pub fn encrypt(&self, random_str: String, plaintext: String) -> String {
+    /// random_str 随机生成的字符串
+    /// 返回加密后的字符串
+    pub fn encrypt<T>(&self, random_str: T, plaintext: T) -> String
+    where
+        T: Into<Cow<'a, str>>,
+    {
         let config = base64::STANDARD.decode_allow_trailing_bits(true);
         let iv = &self.aeskey[0..16];
         let key = &self.aeskey[..];
-        let mut v_bytes = random_str.as_bytes().to_vec();
-        let mut text_bytes = plaintext.as_bytes().to_vec();
+        let mut v_bytes = random_str.into().to_mut().as_bytes().to_vec();
+        let mut text_bytes = plaintext.into().to_mut().as_bytes().to_vec();
         let mut text_len_bytes = get_network_bytes_order(text_bytes.len()).to_vec();
         let mut receiveid_bytes = self.receiveid.as_bytes().to_vec();
         v_bytes.append(&mut text_len_bytes);
@@ -90,12 +98,21 @@ impl WxCrptUtil {
         encode_base64_encrypted
     }
 
-    pub fn decrypt(&self, cipher_text: String) -> String {
+    ///
+    ///对密文解密
+    /// cipher_text 需要解密的密文
+    /// 返回解密后的字符串
+    /// 
+    pub fn decrypt<T>(&self, cipher_text: T) -> String
+    where
+        T: Into<Cow<'a, str>>,
+    {
         let config = base64::STANDARD.decode_allow_trailing_bits(true);
-        let text_s = match decode_config(&urldecode(cipher_text.to_string()), config) {
-            Ok(n) => n,
-            Err(e) => panic!("decrypt:{}", e),
-        };
+        let text_s =
+            match decode_config(&urldecode(cipher_text.into().to_mut().to_string()), config) {
+                Ok(n) => n,
+                Err(e) => panic!("decrypt:{}", e),
+            };
 
         let iv = &self.aeskey[0..16];
         let key = &self.aeskey[..];
@@ -120,15 +137,19 @@ impl WxCrptUtil {
 
     ///
     ///将企业微信回复用户的消息加密打包.
-    ///
-    pub fn encrypt_msg(&self, plaintext: String) -> String {
+    /// plaintext 需要加密的明文
+    /// 返回加密后的xml字符串
+    /// 
+    pub fn encrypt_msg<T>(&self, plaintext: T) -> String
+    where
+        T: Into<Cow<'a, str>>,
+    {
         let random_str = get_random_str();
-        let encrypted_xml = self.encrypt(random_str, plaintext);
+        let encrypted_xml = self.encrypt(random_str, plaintext.into().to_mut().to_string());
         let nonce = get_random_str();
         let timestamp = Local::now().timestamp();
         let signature = self.getsha1(timestamp.to_string(), nonce.clone(), encrypted_xml.clone());
-        
-        println!("nonce:{},timestamp:{},signature:{}",nonce,timestamp,signature);
+
         xml_create(
             encrypted_xml.clone(),
             signature,
@@ -137,34 +158,52 @@ impl WxCrptUtil {
         )
     }
 
-    pub fn decrypt_msg(
+    ///
+    /// 对收到的检验消息的真实性，并且获取解密后的明文.
+    /// msgSignature 签名串，对应URL参数的msg_signature
+    /// timeStamp 时间戳，对应URL参数的timestamp
+    /// nonce 随机串，对应URL参数的nonce
+    /// postData 密文，对应POST请求的数据
+    /// 返回解密后的字符串
+    /// 
+    pub fn decrypt_msg<T>(
         &self,
-        msgsignature: String,
-        timestamp: String,
-        nonce: String,
-        postdata: String,
-    ) -> String {
-        let x: Xml = match from_reader(postdata.as_bytes()){
+        msgsignature: T,
+        timestamp: T,
+        nonce: T,
+        postdata: T,
+    ) -> String 
+    where T:Into<Cow<'a,str>> + Copy
+    {
+        let x: Xml = match from_reader(postdata.into().as_bytes()) {
             Ok(n) => n,
-            Err(e) => panic!("xml解析错误:{}",e),
+            Err(e) => panic!("xml解析错误:{}", e),
         };
-        let signature = self.getsha1(timestamp.to_string(), nonce.clone(), x.Encrypt.clone());
-        if signature != msgsignature {
+        let signature = self.getsha1(timestamp.into().to_string(), nonce.into().to_string(), x.Encrypt.clone());
+        if signature != msgsignature.into() {
             panic!(
                 "消息解密,Sha1签名验证不通过:\n {} \n {}",
-                signature, msgsignature
+                signature, msgsignature.into()
             );
         };
         let result = self.decrypt(x.Encrypt.clone());
         result
     }
 
-    pub fn getsha1(&self, timestamp: String, nonce: String, encrypt: String) -> String {
+    ///
+    /// 用SHA1算法生成安全签名
+    /// timestamp 时间戳
+    /// nonce 随机字符串
+    /// encrypt 密文
+    /// 返回安全签名
+    pub fn getsha1<T>(&self, timestamp: T, nonce: T, encrypt: T) -> String 
+    where T:Into<Cow<'a,str>>
+    {
         let mut v = vec![
-            self.token.clone(),
-            timestamp,
-            nonce,
-            urldecode(encrypt.to_string()),
+            self.token.to_string(),
+            timestamp.into().to_mut().to_string(),
+            nonce.into().to_mut().to_string(),
+            urldecode(encrypt.into().to_mut().to_string()),
         ];
         v.sort();
         let str: String = v.into_iter().collect();
@@ -173,31 +212,53 @@ impl WxCrptUtil {
         hasher.result_str()
     }
 
-    pub fn verifyurl(
+    ///
+    /// msgSignature 签名串，对应URL参数的msg_signature
+    /// timeStamp 时间戳，对应URL参数的timestamp
+    /// nonce 随机串，对应URL参数的nonce
+    /// echoStr 随机串，对应URL参数的echostr
+    /// 返回解密后的验证字符串
+    ///
+    pub fn verifyurl<T>(
         &self,
-        msgsignature: String,
-        timestamp: String,
-        nonce: String,
-        echostr: String,
-    ) -> String {
-        let signature = self.getsha1(timestamp, nonce, echostr.clone());
-        if signature != msgsignature {
-            panic!("Sha1签名验证不通过:\n {} \n {}", signature, msgsignature);
+        msgsignature: T,
+        timestamp: T,
+        nonce: T,
+        echostr: T,
+    ) -> String 
+    where T: Into<Cow<'a,str>> + Copy
+    {
+        let signature = self.getsha1(timestamp, nonce, echostr);
+        if signature != msgsignature.into().to_mut().to_string() {
+            panic!("Sha1签名验证不通过:\n {} \n {}", signature, msgsignature.into());
         };
-        let result = self.decrypt(echostr.clone());
+        let result = self.decrypt(echostr);
         result
     }
 }
 
+///
+/// 随机生成16位字符串
+///
 fn get_random_str() -> String {
     let rand_string: String = thread_rng().sample_iter(&Alphanumeric).take(16).collect();
     rand_string
 }
-
+///
+/// 生成4个字节的网络字节序
+///
 fn get_network_bytes_order(num: usize) -> [u8; 4] {
     (num as u32).to_be_bytes()
 }
 
+///
+/// 生成xml消息
+/// encrypt 加密后的消息密文
+/// signature 安全签名
+/// timestamp 时间戳
+/// nonce 随机字符串
+/// 返回打包后的xml字符串
+///
 pub fn xml_create(encrypt: String, signaure: String, timestamp: String, nonce: String) -> String {
     let xml_str = format!("<xml>\n<Encrypt><![CDATA[{}]]></Encrypt>\n<MsgSignature><![CDATA[{}]]></MsgSignature>\n<TimeStamp>{}</TimeStamp>\n<Nonce><![CDATA[{}]]></Nonce>\n</xml>",encrypt,signaure,timestamp,nonce);
     xml_str
