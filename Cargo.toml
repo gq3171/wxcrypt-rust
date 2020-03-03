@@ -1,6 +1,6 @@
 [package]
 name = "wxcrypt"
-version = "0.2.1"
+version = "0.2.2"
 authors = ["Yiye <87362775@qq.com>"]
 edition = "2018"
 description = "企业微信消息加解密Rust版"
@@ -20,6 +20,5 @@ urldecode = "0.1.1"
 byteorder = "1.3.4"
 rand = "0.7.3"
 chrono = "0.4.10"
-serde-xml-rs = "0.3.1"
-serde_derive = "1.0"
-serde = "1.0"
+serde = { version = "1.0", features = [ "derive" ] }
+quick-xml = { version = "0.17", features = [ "serialize" ] }
