@@ -1,6 +1,6 @@
 [package]
 name = "wxcrypt"
-version = "0.2.2"
+version = "0.2.3"
 authors = ["Yiye <87362775@qq.com>"]
 edition = "2018"
 description = "企业微信消息加解密Rust版"
