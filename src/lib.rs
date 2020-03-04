@@ -1,3 +1,5 @@
+pub mod error;
+
 extern crate aes_soft as aes;
 extern crate base64;
 extern crate block_modes;
@@ -21,17 +23,17 @@ use rand::{thread_rng, Rng};
 use std::borrow::{Cow, Borrow};
 use urldecode::decode as urldecode;
 use serde::Deserialize;
-use quick_xml::de::{from_str};
+use quick_xml::de::from_str;
 
 type Aes256Cbc = Cbc<Aes256, Pkcs7>;
 
 #[derive(Debug, Deserialize)]
 struct Xml {
-    #[serde(rename = "ToUserName",default)]
+    #[serde(rename = "ToUserName", default)]
     to_user_name: String,
-    #[serde(rename = "Encrypt",default)]
+    #[serde(rename = "Encrypt", default)]
     encrypt: String,
-    #[serde(rename = "AgentID",default)]
+    #[serde(rename = "AgentID", default)]
     agentid: String,
 }
 
@@ -48,31 +50,30 @@ impl<'a> WxCrptUtil<'a> {
     /// 初始化WxCrptUtil,
     /// encodingaeskey 企业微信后台，开发者设置的EncodingAESKey,未经Base64解密,
     /// 返回初始化后的WxCrptUtil类型,
-    pub fn new<T>(token: T, encodingaeskey: T, receiveid: T) -> WxCrptUtil<'a>
-    where
-        T: Into<Cow<'a, str>>,
+    pub fn new<T>(token: T, encodingaeskey: T, receiveid: T) -> error::Result<WxCrptUtil<'a>>
+        where
+            T: Into<Cow<'a, str>>,
     {
         let mut en_aeskey = encodingaeskey.into();
         en_aeskey.to_mut().push_str("=");
         let config = base64::STANDARD.decode_allow_trailing_bits(true);
-        let aeskey = match decode_config(en_aeskey.to_mut(), config) {
-            Ok(n) => n,
-            Err(e) => panic!("初始化AesKey错误:{}", e),
-        };
-        WxCrptUtil {
-            token: token.into(),
-            aeskey: Cow::from(aeskey),
-            receiveid: receiveid.into(),
-        }
+        let aeskey = decode_config(en_aeskey.to_mut(), config)?;
+        Ok(
+            WxCrptUtil {
+                token: token.into(),
+                aeskey: Cow::from(aeskey),
+                receiveid: receiveid.into(),
+            }
+        )
     }
 
     /// 对明文进行加密.
     /// plaintext 需要加密的明文,
     /// random_str 随机生成的字符串,
     /// 返回加密后的字符串,
-    pub fn encrypt<T>(&self, random_str: T, plaintext: T) -> String
-    where
-        T: Into<Cow<'a, str>>,
+    pub fn encrypt<T>(&self, random_str: T, plaintext: T) -> error::Result<String>
+        where
+            T: Into<Cow<'a, str>>,
     {
         let config = base64::STANDARD.decode_allow_trailing_bits(true);
         let iv = &self.aeskey[0..16];
@@ -84,41 +85,29 @@ impl<'a> WxCrptUtil<'a> {
         v_bytes.append(&mut text_len_bytes);
         v_bytes.append(&mut text_bytes);
         v_bytes.append(&mut receiveid_bytes);
-        let cipher = match Aes256Cbc::new_var(key, iv) {
-            Ok(n) => n,
-            Err(e) => panic!("Aes_CBC Encrypt:{}", e),
-        };
+
+        let cipher = Aes256Cbc::new_var(key, iv)?;
 
         let ciphertext = cipher.encrypt_vec(&v_bytes);
         let encode_base64_encrypted = base64::encode_config(&ciphertext, config);
 
-        encode_base64_encrypted
+        Ok(encode_base64_encrypted)
     }
 
     /// 对密文解密,
     /// cipher_text 需要解密的密文,
     /// 返回解密后的字符串.
-    pub fn decrypt<T>(&self, cipher_text: T) -> String
-    where
-        T: Into<Cow<'a, str>>,
+    pub fn decrypt<T>(&self, cipher_text: T) -> error::Result<String>
+        where
+            T: Into<Cow<'a, str>>,
     {
         let config = base64::STANDARD.decode_allow_trailing_bits(true);
-        let text_s =
-            match decode_config(&urldecode(cipher_text.into().to_mut().to_string()), config) {
-                Ok(n) => n,
-                Err(e) => panic!("decrypt:{}", e),
-            };
+        let text_s = decode_config(&urldecode(cipher_text.into().to_mut().to_string()), config)?;
 
         let iv = &self.aeskey[0..16];
         let key = &self.aeskey[..];
-        let cipher = match Aes256Cbc::new_var(key, iv) {
-            Ok(n) => n,
-            Err(e) => panic!("Aes_CBC Decrypt:{}", e),
-        };
-        let decrypted_ciphertext = match cipher.decrypt_vec(&text_s[..]) {
-            Ok(n) => n,
-            Err(e) => panic!("{}", e),
-        };
+        let cipher = Aes256Cbc::new_var(key, iv)?;
+        let decrypted_ciphertext = cipher.decrypt_vec(&text_s[..])?;
 
         let content = &decrypted_ciphertext[16..];
         let mut msg_slice = &content[..4];
@@ -127,27 +116,28 @@ impl<'a> WxCrptUtil<'a> {
         //let receiveid = &content[(msg_len + 4) as usize..];
         let result = String::from_utf8(msg.to_vec()).unwrap();
 
-        result
+        Ok(result)
     }
 
     /// 将企业微信回复用户的消息加密打包.
     /// plaintext 需要加密的明文
     /// 返回加密后的xml字符串
-    pub fn encrypt_msg<T>(&self, plaintext: T) -> String
-    where
-        T: Into<Cow<'a, str>>,
+    pub fn encrypt_msg<T>(&self, plaintext: T) -> error::Result<String>
+        where
+            T: Into<Cow<'a, str>>,
     {
         let random_str = get_random_str();
-        let encrypted_xml = self.encrypt(random_str, plaintext.into().to_mut().to_string());
+        let encrypted_xml = self.encrypt(random_str, plaintext.into().to_mut().to_string())?;
         let nonce = get_random_str();
         let timestamp = Local::now().timestamp();
         let signature = self.getsha1(timestamp.to_string(), nonce.clone(), encrypted_xml.clone());
-
-        xml_create(
-            encrypted_xml.clone(),
-            signature,
-            timestamp.to_string(),
-            nonce.clone(),
+        Ok(
+            xml_create(
+                encrypted_xml.clone(),
+                signature,
+                timestamp.to_string(),
+                nonce.clone(),
+            )
         )
     }
 
@@ -163,13 +153,10 @@ impl<'a> WxCrptUtil<'a> {
         timestamp: T,
         nonce: T,
         postdata: T,
-    ) -> String 
-    where T:Into<Cow<'a,str>> + Copy
+    ) -> error::Result<String>
+        where T: Into<Cow<'a, str>> + Copy
     {
-        let x: Xml = match from_str(postdata.into().borrow()) {
-            Ok(n) => n,
-            Err(e) => panic!("xml解析错误:{}", e),
-        };
+        let x: Xml = from_str(postdata.into().borrow())?;
         let signature = self.getsha1(timestamp.into().to_string(), nonce.into().to_string(), x.encrypt.clone());
         if signature != msgsignature.into().to_mut().to_string() {
             panic!(
@@ -177,8 +164,8 @@ impl<'a> WxCrptUtil<'a> {
                 signature, msgsignature.into()
             );
         };
-        let result = self.decrypt(x.encrypt.clone());
-        result
+        let result = self.decrypt(x.encrypt.clone())?;
+        Ok(result)
     }
 
     /// 用SHA1算法生成安全签名
@@ -186,8 +173,8 @@ impl<'a> WxCrptUtil<'a> {
     /// nonce 随机字符串
     /// encrypt 密文
     /// 返回安全签名
-    pub fn getsha1<T>(&self, timestamp: T, nonce: T, encrypt: T) -> String 
-    where T:Into<Cow<'a,str>>
+    pub fn getsha1<T>(&self, timestamp: T, nonce: T, encrypt: T) -> String
+        where T: Into<Cow<'a, str>>
     {
         let mut v = vec![
             self.token.to_string(),
@@ -213,15 +200,15 @@ impl<'a> WxCrptUtil<'a> {
         timestamp: T,
         nonce: T,
         echostr: T,
-    ) -> String 
-    where T: Into<Cow<'a,str>> + Copy
+    ) -> error::Result<String>
+        where T: Into<Cow<'a, str>> + Copy
     {
         let signature = self.getsha1(timestamp, nonce, echostr);
         if signature != msgsignature.into().to_mut().to_string() {
             panic!("Sha1签名验证不通过:\n {} \n {}", signature, msgsignature.into());
         };
-        let result = self.decrypt(echostr);
-        result
+        let result = self.decrypt(echostr)?;
+        Ok(result)
     }
 }
 
@@ -244,7 +231,7 @@ fn get_network_bytes_order(num: usize) -> [u8; 4] {
 /// nonce 随机字符串
 /// 返回打包后的xml字符串
 pub fn xml_create(encrypt: String, signaure: String, timestamp: String, nonce: String) -> String {
-    let xml_str = format!("<xml>\n<Encrypt><![CDATA[{}]]></Encrypt>\n<MsgSignature><![CDATA[{}]]></MsgSignature>\n<TimeStamp>{}</TimeStamp>\n<Nonce><![CDATA[{}]]></Nonce>\n</xml>",encrypt,signaure,timestamp,nonce);
+    let xml_str = format!("<xml>\n<Encrypt><![CDATA[{}]]></Encrypt>\n<MsgSignature><![CDATA[{}]]></MsgSignature>\n<TimeStamp>{}</TimeStamp>\n<Nonce><![CDATA[{}]]></Nonce>\n</xml>", encrypt, signaure, timestamp, nonce);
     xml_str
 }
 
