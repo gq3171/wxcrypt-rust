@@ -9,18 +9,18 @@ pub enum WxError {
     Base64Err(DecodeError),
     BlockModeErr(block_modes::BlockModeError),
     InvalidKeyIvLength(block_modes::InvalidKeyIvLength),
-    QuickXmlErr(DeError)
+    QuickXmlErr(DeError),
 }
 
-pub type Result<T> = std::result::Result<T,WxError>;
+pub type Result<T> = std::result::Result<T, WxError>;
 
 impl fmt::Display for WxError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
-            WxError::Base64Err(ref err) => write!(f,"{}",err),
-            WxError::BlockModeErr(ref err) => write!(f,"{}",err),
-            WxError::InvalidKeyIvLength(ref err) => write!(f,"{}",err),
-            WxError::QuickXmlErr(ref err) => write!(f,"{}",err),
+            WxError::Base64Err(ref err) => write!(f, "{}", err),
+            WxError::BlockModeErr(ref err) => write!(f, "{}", err),
+            WxError::InvalidKeyIvLength(ref err) => write!(f, "{}", err),
+            WxError::QuickXmlErr(ref err) => write!(f, "{}", err),
         }
     }
 }
